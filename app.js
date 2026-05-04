@@ -1,4 +1,4 @@
-﻿const SCORE_ENDPOINT = "https://script.google.com/macros/s/AKfycbw4v8WKvCHRsyahSQmNrSFccVfHyZF9yoVIidDJ-i_Hnp7cRJxtBdIBIHr6diwCvCQjFw/exec";
+const SCORE_ENDPOINT = "https://script.google.com/macros/s/AKfycbzZVQsH3JSb7RSabadtSF_fsLzkgISY1RJcQglTeAhbajd3gqtRa9N7If-urkBKQAWXfw/exec";
 const COURSE_FILE = "medical_transcription_v4_2.html";
 
 const learnerKey = "medicalCourse.learner";
@@ -466,17 +466,31 @@ async function submitScore(result) {
     return;
   }
 
-  try {
-    await fetch(SCORE_ENDPOINT, {
-      method: "POST",
-      mode: "cors",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(result)
-    });
+  // Use text/plain to avoid a CORS preflight — Apps Script does not handle
+  // OPTIONS requests, so application/json would silently fail from GitHub Pages.
+  // text/plain is a "simple request" and goes straight through.
+  const MAX_ATTEMPTS = 3;
 
-    sheetStatus.textContent = "Score sent to Google Sheets.";
-  } catch (error) {
-    sheetStatus.textContent = "Could not send score. It is saved locally in this browser.";
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    try {
+      await fetch(SCORE_ENDPOINT, {
+        method: "POST",
+        mode: "no-cors",          // Apps Script ignores the OPTIONS preflight; no-cors skips it
+        headers: { "Content-Type": "text/plain" },
+        body: JSON.stringify(result)
+      });
+
+      // no-cors responses are always opaque (status 0) — a thrown error means network failure.
+      // If we reach here the request was dispatched successfully.
+      sheetStatus.textContent = "Score sent to Google Sheets ✓";
+      return;
+    } catch (error) {
+      if (attempt < MAX_ATTEMPTS) {
+        await new Promise((resolve) => window.setTimeout(resolve, attempt * 1500));
+      } else {
+        sheetStatus.textContent = "Could not send score. It is saved locally — reload to retry.";
+      }
+    }
   }
 }
 
@@ -517,4 +531,3 @@ if (savedLearner) {
 } else {
   showLogin();
 }
-
