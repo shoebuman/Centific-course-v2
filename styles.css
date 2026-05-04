@@ -1,0 +1,219 @@
+﻿:root {
+  color-scheme: light;
+  --bg: #f5f7fb;
+  --panel: #ffffff;
+  --panel-soft: #f9fbfd;
+  --line: #d9e2ee;
+  --text: #182230;
+  --muted: #667085;
+  --green: #1d9e75;
+  --blue: #2563eb;
+  --red: #d92d20;
+  --yellow: #f79009;
+  --shadow: 0 18px 55px rgba(16, 24, 40, 0.1);
+}
+
+* { box-sizing: border-box; }
+
+body {
+  min-height: 100vh;
+  margin: 0;
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  background: linear-gradient(180deg, #ffffff 0%, var(--bg) 100%);
+  color: var(--text);
+}
+
+button, input, select { font: inherit; }
+button { cursor: pointer; }
+.hidden { display: none !important; }
+
+.portal {
+  width: min(1180px, calc(100% - 32px));
+  min-height: 100vh;
+  margin: 0 auto;
+}
+
+.login-view {
+  min-height: 100vh;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 380px;
+  gap: 36px;
+  align-items: center;
+  padding: 32px 0;
+}
+
+.brand-mark {
+  width: 64px;
+  height: 64px;
+  display: grid;
+  place-items: center;
+  margin-bottom: 28px;
+  border-radius: 8px;
+  background: var(--green);
+  color: #ffffff;
+  font-size: 1.5rem;
+  font-weight: 900;
+}
+
+.eyebrow {
+  margin: 0 0 8px;
+  color: var(--green);
+  font-size: 0.76rem;
+  font-weight: 800;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.hero-copy h1 {
+  max-width: 760px;
+  margin: 0;
+  font-size: clamp(2.4rem, 6vw, 5.4rem);
+  line-height: 0.98;
+  letter-spacing: 0;
+}
+
+.hero-copy p {
+  max-width: 640px;
+  color: var(--muted);
+  font-size: 1.08rem;
+  line-height: 1.7;
+}
+
+.login-card, .course-frame-card, .score-panel article, .topbar {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.96);
+  box-shadow: var(--shadow);
+}
+
+.login-card {
+  display: grid;
+  gap: 18px;
+  padding: 24px;
+}
+
+.login-card h2, .course-frame-card h2 {
+  margin: 0;
+  font-size: 1.45rem;
+  letter-spacing: 0;
+}
+
+.muted { color: var(--muted); }
+
+label {
+  display: grid;
+  gap: 7px;
+  color: var(--muted);
+  font-size: 0.9rem;
+  font-weight: 700;
+}
+
+input, select {
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  outline: none;
+  background: #ffffff;
+  color: var(--text);
+  padding: 0.85rem 0.9rem;
+}
+
+input:focus, select:focus {
+  border-color: var(--blue);
+  box-shadow: 0 0 0 4px rgba(37, 99, 235, 0.12);
+}
+
+.primary-button, .ghost-button, .ghost-link {
+  min-height: 2.75rem;
+  border-radius: 8px;
+  font-weight: 850;
+}
+
+.primary-button {
+  border: 0;
+  background: var(--green);
+  color: #ffffff;
+}
+
+.primary-button:hover { background: #157a5e; }
+
+.ghost-button, .ghost-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--line);
+  background: #ffffff;
+  color: var(--text);
+  padding: 0 1rem;
+  text-decoration: none;
+}
+
+.ghost-button:hover, .ghost-link:hover { border-color: var(--blue); color: var(--blue); }
+
+.course-view { padding: 24px 0 40px; }
+
+.topbar {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 16px;
+}
+
+.topbar h1 {
+  margin: 0;
+  font-size: clamp(1.35rem, 3vw, 2.2rem);
+  letter-spacing: 0;
+}
+
+.topbar-actions, .frame-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.status-pill {
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--muted);
+  padding: 0.65rem 0.9rem;
+  font-size: 0.82rem;
+  background: var(--panel-soft);
+}
+
+.score-panel {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  margin: 18px 0;
+}
+
+.score-panel article { padding: 16px; }
+.score-panel span { display: block; color: var(--muted); font-size: 0.82rem; font-weight: 800; }
+.score-panel strong { display: block; margin-top: 8px; font-size: 2rem; }
+
+.course-frame-card { padding: 16px; }
+
+iframe {
+  width: 100%;
+  height: 78vh;
+  min-height: 620px;
+  margin-top: 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+@media (max-width: 760px) {
+  .portal { width: min(100% - 20px, 1180px); }
+  .login-view, .score-panel { grid-template-columns: 1fr; }
+  .topbar { align-items: stretch; flex-direction: column; }
+  .topbar-actions { align-items: stretch; }
+  .ghost-button, .ghost-link, .status-pill { width: 100%; }
+  iframe { height: 70vh; min-height: 520px; }
+}

@@ -1,0 +1,97 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Centific Medical Transcription Training</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <main class="portal">
+    <section class="login-view" id="loginView">
+      <div class="hero-copy">
+        <div class="brand-mark">C</div>
+        <p class="eyebrow">Centific training portal</p>
+        <h1>Medical Transcription Training</h1>
+        <p>
+          This course is made by Centific. Sign in with the username that should appear in the score sheet,
+          complete the localized course, and submit the final assessment.
+        </p>
+      </div>
+
+      <form class="login-card" id="loginForm">
+        <div>
+          <p class="eyebrow">Learner access</p>
+          <h2>Start course</h2>
+          <p class="muted">Progress is saved in this browser, so learners can refresh and continue.</p>
+        </div>
+
+        <label>
+          Username
+          <input id="usernameInput" type="text" placeholder="example: shoeb.khan" required autocomplete="name">
+        </label>
+
+        <label>
+          Locale
+          <select id="localeInput">
+            <option value="English / UK">English / UK</option>
+            <option value="Deutsch / Germany">Deutsch / Germany</option>
+            <option value="Nederlands / Netherlands">Nederlands / Netherlands</option>
+            <option value="Français / France">Français / France</option>
+          </select>
+        </label>
+
+        <button class="primary-button" type="submit">Enter training</button>
+      </form>
+    </section>
+
+    <section class="course-view hidden" id="courseView">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">Centific Medical Transcription Training</p>
+          <h1 id="learnerTitle">Learner course</h1>
+        </div>
+
+        <div class="topbar-actions">
+          <span class="status-pill" id="sheetStatus">Google Sheet not connected yet</span>
+          <button class="ghost-button" id="resetProgressButton" type="button">Reset progress</button>
+          <button class="ghost-button" id="logoutButton" type="button">Logout</button>
+        </div>
+      </header>
+
+      <section class="score-panel">
+        <article>
+          <span>Latest score</span>
+          <strong id="latestScore">--</strong>
+        </article>
+        <article>
+          <span>Status</span>
+          <strong id="latestStatus">Not submitted</strong>
+        </article>
+        <article>
+          <span>Local submissions</span>
+          <strong id="savedRows">0</strong>
+        </article>
+      </section>
+
+      <section class="course-frame-card">
+        <div class="frame-header">
+          <div>
+            <p class="eyebrow">Course</p>
+            <h2>Complete all modules, then take the final assessment</h2>
+          </div>
+          <a class="ghost-link" id="openCourseLink" href="medical_transcription_v4_2.html" target="_blank" rel="noreferrer">Open course in new tab</a>
+        </div>
+
+        <iframe
+          id="courseFrame"
+          title="Medical transcription course"
+          src="medical_transcription_v4_2.html"
+        ></iframe>
+      </section>
+    </section>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>
