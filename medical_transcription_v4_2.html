@@ -2523,11 +2523,32 @@ fr:[
 };
 
 // ─── STATE & GLOSSARY LOGIC ──────────────────────────────────────────────────
-// FIX: `let` changed to `var` so these are accessible as frameWindow.lang
-// and frameWindow.completed from the parent portal (app.js).
-// `let`/`const` at top-level script scope are NOT added to window —
-// that was silently breaking all progress saves and restores.
-var lang='en'; var completed=new Set();
+let lang='en', completed=new Set();
+
+// ── Self-contained progress persistence ──────────────────────────────────────
+// Saves and restores `completed` directly inside this script's own context.
+// This is the only reliable approach — no cross-frame variable access needed.
+// Uses the same localStorage key format as the portal (app.js) so both stay in sync.
+function _progressKey(){
+  try{
+    var l=JSON.parse(localStorage.getItem('medicalCourse.learner')||'{}');
+    var slug=((l.username||'guest')+'.'+lang).replace(/[^a-z0-9_.-]/gi,'_');
+    return 'medicalCourse.progress.'+slug;
+  }catch(e){ return 'medicalCourse.progress.guest.'+lang; }
+}
+function saveProgress(){
+  try{
+    var d=JSON.parse(localStorage.getItem(_progressKey())||'{}');
+    d.completed=Array.from(completed); d.lang=lang; d.updatedAt=new Date().toISOString();
+    localStorage.setItem(_progressKey(),JSON.stringify(d));
+  }catch(e){}
+}
+function loadProgress(){
+  try{
+    var d=JSON.parse(localStorage.getItem(_progressKey())||'{}');
+    if(d.completed&&d.completed.length){completed=new Set(d.completed);}
+  }catch(e){}
+}
 
 function setLang(l){
   lang=l; completed=new Set();
@@ -2536,6 +2557,7 @@ function setLang(l){
   document.getElementById('lbl-back2').textContent=T[lang].backtest;
   document.getElementById('home-title').textContent=T[lang].homeTitle;
   document.getElementById('home-sub').textContent=T[lang].homeSub;
+  loadProgress(); // restore completed modules before rendering the grid
   renderModuleGrid(); updateProgress(); showScreen('s-home');
   var si=document.getElementById('global-search'); if(si){si.value='';si.placeholder=T[lang].searchPlaceholder;} document.getElementById('search-results').innerHTML='';
 }
@@ -2681,9 +2703,9 @@ function renderModuleQuiz(modId,container){
 function checkAllAnswered(modId,container,total){
   const answered=container.querySelectorAll('.quiz-opt.correct,.quiz-opt.wrong').length;
   if(answered>=total&&!completed.has(modId)){
-completed.add(modId);
-
-window.dispatchEvent(new Event('moduleCompleted'));
+    completed.add(modId);
+    saveProgress(); // persist immediately so refresh keeps this module green
+    window.dispatchEvent(new Event('moduleCompleted'));
 
 updateProgress();
 renderModuleGrid();
@@ -2820,6 +2842,39 @@ function runSearch(q){
   }
   out.innerHTML=html;
 }
+
+// ── DOMContentLoaded: restore progress as soon as the page is ready ──────────
+// This covers two cases:
+//   1. HTML opened standalone (not inside the portal iframe): restores the
+//      learner's last language and completed modules without needing app.js.
+//   2. Inside the portal iframe: fires before app.js calls setLang(), so
+//      `completed` is pre-populated — setLang() will call loadProgress() again
+//      with the confirmed correct language, so there is no double-counting.
+document.addEventListener('DOMContentLoaded', function() {
+  try {
+    // Determine the learner's saved language from the portal's learner record
+    var localeMap = {
+      'English / UK':             'en',
+      'Deutsch / Germany':        'de',
+      'Nederlands / Netherlands': 'nl',
+      'Français / France':        'fr',
+      'Francais / France':        'fr'
+    };
+    var learner = JSON.parse(localStorage.getItem('medicalCourse.learner') || 'null');
+    if (learner && learner.locale && localeMap[learner.locale]) {
+      lang = localeMap[learner.locale]; // set correct language before loadProgress
+    }
+    // Restore completed modules for this language
+    loadProgress();
+    // Only re-render if we are already on the home screen (standalone mode).
+    // When inside the portal, setLang() will call renderModuleGrid() shortly after.
+    var homeScreen = document.getElementById('s-home');
+    if (homeScreen && homeScreen.classList.contains('active')) {
+      renderModuleGrid();
+      updateProgress();
+    }
+  } catch(e) {}
+});
 
 </script>
 </body>
