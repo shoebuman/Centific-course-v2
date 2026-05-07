@@ -89,8 +89,8 @@ function renderStats() {
 
 function renderSheetStatus() {
   sheetStatus.textContent = SCORE_ENDPOINT
-    ? "Google Sheet connected"
-    : "Google Sheet not connected yet";
+    ? "Supabase connected"
+    : "Database not connected yet";
 }
 
 function startWatchingCourseFrame() {
