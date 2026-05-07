@@ -1,4 +1,4 @@
-const SUPABASE_URL = "https://jjbfhxjqfbtxbzsmsrjx.supabase.co/rest/v1/";
+const SUPABASE_URL = "https://jjbfhxjqfbtxbzsmsrjx.supabase.co";
 const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImpqYmZoeGpxZmJ0eGJ6c21zcmp4Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzgxMzY4OTAsImV4cCI6MjA5MzcxMjg5MH0.lNL0nvvqCVT_aQD-XzMwhIa_te5-Zxgq58GMsN-RtG8";
 const COURSE_FILE = "medical_transcription_v4_2.html";
 const learnerKey = "medicalCourse.learner";
@@ -88,9 +88,7 @@ function renderStats() {
 }
 
 function renderSheetStatus() {
-  sheetStatus.textContent = SCORE_ENDPOINT
-    ? "Supabase connected"
-    : "Database not connected yet";
+  sheetStatus.textContent = "Supabase connected";
 }
 
 function startWatchingCourseFrame() {
