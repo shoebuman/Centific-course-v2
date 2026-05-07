@@ -113,6 +113,9 @@ function startWatchingCourseFrame() {
     restoreCourseProgress(frameDocument);
     restoreFinalAttempt(frameDocument);
     captureScoreFromFrame(frameDocument);
+    frameDocument.defaultView.addEventListener("moduleCompleted", () => {
+  persistCourseProgress(frameDocument);
+});
 
     const observer = new MutationObserver(() => {
       scheduleProgressSave(frameDocument);
