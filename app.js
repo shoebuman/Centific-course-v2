@@ -1,6 +1,6 @@
-const SCORE_ENDPOINT = "https://script.google.com/macros/s/AKfycbzZVQsH3JSb7RSabadtSF_fsLzkgISY1RJcQglTeAhbajd3gqtRa9N7If-urkBKQAWXfw/exec";
+const SUPABASE_URL = "https://jjbfhxjqfbtxbzsmsrjx.supabase.co/rest/v1/";
+const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImpqYmZoeGpxZmJ0eGJ6c21zcmp4Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzgxMzY4OTAsImV4cCI6MjA5MzcxMjg5MH0.lNL0nvvqCVT_aQD-XzMwhIa_te5-Zxgq58GMsN-RtG8";
 const COURSE_FILE = "medical_transcription_v4_2.html";
-
 const learnerKey = "medicalCourse.learner";
 const resultsKey = "medicalCourse.results";
 const activeAttemptKey = "medicalCourse.activeAttempt";
