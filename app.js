@@ -1,111 +1,90 @@
 // ─────────────────────────────────────────────────────────────────────────────
-// app.js  –  Centific Medical Transcription Portal
+// app.js  –  Centific Medical Transcription Portal  (v3 — injection fix)
 //
-// FIX LOG (all bugs found in analysis):
+// ROOT CAUSE OF ALL PREVIOUS FAILURES
+// ─────────────────────────────────────────────────────────────────────────────
+// The course HTML (medical_transcription_v4_2.html) declares its two key state
+// variables using `let`:
 //
-//  BUG 1 ── CRITICAL SCOPE DEFECT (root cause of progress loss on refresh)
-//    restoreCourseProgress(), restoreCompletedModules(), and readSavedProgress()
-//    were accidentally defined INSIDE installCoursePersistence() due to a
-//    missing closing brace.  All calls to those functions from
-//    startWatchingCourseFrame() therefore targeted undefined identifiers and
-//    silently failed with a ReferenceError, so progress was never written or
-//    read on reload.  Fixed by hoisting all three functions to module scope.
+//   let lang = 'en';
+//   let completed = new Set();
 //
-//  BUG 2 ── RACE CONDITION: restoreFinalAttempt called before DOM is ready
-//    restoreFinalAttempt() was invoked immediately after openFinalTest()
-//    inside installCoursePersistence, but the test DOM renders asynchronously.
-//    Fixed with a short setTimeout to let the frame render before re-applying
-//    saved selections.
+// In modern browsers, `let` (and `const`) at the top level of a script are
+// NOT added to the window object.  Every attempt to read or write
+// `frameWindow.completed` or `frameWindow.lang` from outside the frame
+// therefore silently accessed `undefined` — meaning:
 //
-//  BUG 3 ── PROGRESS OVERWRITTEN BY EMPTY COMPLETED SET
-//    persistCourseProgress() spread the existing saved object first, then
-//    always overwrote `completed` with [...frameWindow.completed].  If the
-//    frame had not yet called restoreCompletedModules() (because of Bug 1),
-//    completed was always an empty Set, silently erasing the stored array on
-//    every MutationObserver tick.  Fixed by only writing `completed` when the
-//    frameWindow.completed Set has been populated (or fallback to existing).
+//   • restoreCompletedModules() always bailed out immediately (guard failed)
+//   • persistCourseProgress()   always bailed out immediately (guard failed)
+//   • restoreCourseProgress()   always bailed out immediately (!frameWindow.T)
 //
-//  BUG 4 ── moduleCompleted event listener registered before T is defined
-//    The listener was attached immediately after the iframe loaded, but
-//    restoreCourseProgress() (which sets portalProgressRestored and calls
-//    setLang, which populates T) was called afterwards.  No functional change
-//    needed here – just re-ordered so the listener is last, after restoration.
+// Additionally, even with `var`, when setLang() runs `completed = new Set()`
+// it creates a BRAND NEW Set object.  Any reference held by app.js to the
+// OLD Set is now stale and invisible to the course rendering functions.
 //
-//  BUG 5 ── SCROLL: middle-click / scroll-wheel autoscroll blocked
-//    The outer <body> had no explicit overflow, and the sticky .topbar +
-//    iframe caused the browser to treat the viewport as a scroll container
-//    without the expected scrollbar.  See styles.css fix.  Additionally the
-//    iframe itself must not capture pointer events during autoscroll.
-//    Fixed in styles.css (overflow-y: scroll on html/body; user-select:
-//    none is NOT set — we want text selection, just reliable scroll anchoring).
+// THE FIX
+// ─────────────────────────────────────────────────────────────────────────────
+// Instead of trying to access frame variables from the outside (fragile),
+// we inject a small <script> element directly INTO the frame immediately
+// after it loads.  Because the injected script runs inside the frame's own
+// JS execution context, it forms a proper lexical closure over `lang` and
+// `completed` — regardless of whether those are declared with let, var, or
+// const.  The injected API is then available as frameWindow.__portal.*
+//
+// This approach is robust against:
+//   • let / const / var declarations
+//   • setLang() reassigning `completed` to a new Set()
+//   • Any future refactors to the course HTML variable names
 // ─────────────────────────────────────────────────────────────────────────────
 
-const SUPABASE_URL = "https://jjbfhxjqfbtxbzsmsrjx.supabase.co";
+const SUPABASE_URL    = "https://jjbfhxjqfbtxbzsmsrjx.supabase.co";
 const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImpqYmZoeGpxZmJ0eGJ6c21zcmp4Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzgxMzY4OTAsImV4cCI6MjA5MzcxMjg5MH0.lNL0nvvqCVT_aQD-XzMwhIa_te5-Zxgq58GMsN-RtG8";
-const COURSE_FILE = "medical_transcription_v4_2.html";
+const COURSE_FILE     = "medical_transcription_v4_2.html";
 
-// ── LocalStorage key constants ────────────────────────────────────────────────
-const learnerKey      = "medicalCourse.learner";
-const resultsKey      = "medicalCourse.results";
+const learnerKey       = "medicalCourse.learner";
+const resultsKey       = "medicalCourse.results";
 const activeAttemptKey = "medicalCourse.activeAttempt";
 
-// ── Locale → language code map ────────────────────────────────────────────────
 const localeToLang = {
-  "English / UK":           "en",
-  "Deutsch / Germany":      "de",
+  "English / UK":            "en",
+  "Deutsch / Germany":       "de",
   "Nederlands / Netherlands":"nl",
-  "Francais / France":      "fr",
-  "Français / France":      "fr"
+  "Francais / France":       "fr",
+  "Français / France":       "fr"
 };
 
 // ── DOM references ────────────────────────────────────────────────────────────
-const loginView         = document.querySelector("#loginView");
-const courseView        = document.querySelector("#courseView");
-const loginForm         = document.querySelector("#loginForm");
-const usernameInput     = document.querySelector("#usernameInput");
-const localeInput       = document.querySelector("#localeInput");
-const learnerTitle      = document.querySelector("#learnerTitle");
-const sheetStatus       = document.querySelector("#sheetStatus");
-const logoutButton      = document.querySelector("#logoutButton");
-const courseFrame       = document.querySelector("#courseFrame");
-const latestScore       = document.querySelector("#latestScore");
-const latestStatus      = document.querySelector("#latestStatus");
-const savedRows         = document.querySelector("#savedRows");
+const loginView           = document.querySelector("#loginView");
+const courseView          = document.querySelector("#courseView");
+const loginForm           = document.querySelector("#loginForm");
+const usernameInput       = document.querySelector("#usernameInput");
+const localeInput         = document.querySelector("#localeInput");
+const learnerTitle        = document.querySelector("#learnerTitle");
+const sheetStatus         = document.querySelector("#sheetStatus");
+const logoutButton        = document.querySelector("#logoutButton");
+const courseFrame         = document.querySelector("#courseFrame");
+const latestScore         = document.querySelector("#latestScore");
+const latestStatus        = document.querySelector("#latestStatus");
+const savedRows           = document.querySelector("#savedRows");
 const resetProgressButton = document.querySelector("#resetProgressButton");
-const openCourseLink    = document.querySelector("#openCourseLink");
+const openCourseLink      = document.querySelector("#openCourseLink");
 
 let lastSubmittedKey = "";
 let progressTimer    = 0;
 
-// ── Learner / result helpers ──────────────────────────────────────────────────
-function getLearner() {
-  return JSON.parse(localStorage.getItem(learnerKey) || "null");
-}
+// ── Learner helpers ───────────────────────────────────────────────────────────
+function getLearner()        { return JSON.parse(localStorage.getItem(learnerKey) || "null"); }
+function getResults()        { return JSON.parse(localStorage.getItem(resultsKey) || "[]"); }
+function saveResults(r)      { localStorage.setItem(resultsKey, JSON.stringify(r)); }
+function langForLearner(l)   { return localeToLang[l?.locale] || "en"; }
+function learnerSlug(l)      { return `${l?.username || "guest"}.${langForLearner(l)}`.replace(/[^a-z0-9_.-]/gi, "_"); }
+function courseProgressKey() { return `medicalCourse.progress.${learnerSlug(getLearner())}`; }
+function courseAttemptKey()  { return `medicalCourse.finalAttempt.${learnerSlug(getLearner())}`; }
 
-function getResults() {
-  return JSON.parse(localStorage.getItem(resultsKey) || "[]");
-}
-
-function saveResults(results) {
-  localStorage.setItem(resultsKey, JSON.stringify(results));
-}
-
-function langForLearner(learner) {
-  return localeToLang[learner?.locale] || "en";
-}
-
-function learnerSlug(learner) {
-  return `${learner?.username || "guest"}.${langForLearner(learner)}`
-    .replace(/[^a-z0-9_.-]/gi, "_");
-}
-
-// ── Per-learner progress keys ─────────────────────────────────────────────────
-function courseProgressKey() {
-  return `medicalCourse.progress.${learnerSlug(getLearner())}`;
-}
-
-function courseAttemptKey() {
-  return `medicalCourse.finalAttempt.${learnerSlug(getLearner())}`;
+// ── LocalStorage progress helpers ────────────────────────────────────────────
+function readSavedProgress() {
+  try { return JSON.parse(localStorage.getItem(courseProgressKey()) || "{}"); }
+  catch { return {}; }
 }
 
 // ── View helpers ──────────────────────────────────────────────────────────────
@@ -126,236 +105,180 @@ function showLogin() {
 function renderStats() {
   const results = getResults();
   savedRows.textContent = results.length;
-
-  if (results.length === 0) {
-    latestScore.textContent  = "--";
-    latestStatus.textContent = "Not submitted";
-    return;
-  }
-
+  if (!results.length) { latestScore.textContent = "--"; latestStatus.textContent = "Not submitted"; return; }
   latestScore.textContent  = `${results[0].score}/${results[0].total}`;
   latestStatus.textContent = results[0].status;
 }
 
-function renderSheetStatus() {
-  sheetStatus.textContent = "Supabase connected";
-}
+function renderSheetStatus() { sheetStatus.textContent = "Supabase connected"; }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// PERSISTENCE HELPERS  (module-scope — accessible from everywhere)
+// STEP 1 — INJECT PORTAL API INTO THE FRAME
 //
-// FIX: These three functions were previously trapped inside
-// installCoursePersistence() due to a missing closing brace at line ~221 of
-// the original file.  Any call to them from startWatchingCourseFrame() or
-// from the frame's load handler would throw a ReferenceError at runtime,
-// silently swallowed by the iframe load event, meaning progress was NEVER
-// saved and NEVER restored on refresh.
+// This <script> is appended to the frame body immediately after load.
+// It runs INSIDE the frame's JS context so it has genuine lexical access
+// to `lang` and `completed`, no matter how they are declared.
+//
+// __portal.getCompleted()       → returns a plain Array copy of `completed`
+// __portal.setCompleted(arr)    → replaces `completed` with a new Set, then
+//                                  calls renderModuleGrid + updateProgress
+// __portal.getLang()            → returns current `lang` string
+// __portal.isReady()            → true once the frame's own JS has run
 // ─────────────────────────────────────────────────────────────────────────────
+function injectFrameAPI(frameDocument) {
+  if (frameDocument.defaultView.__portal) return; // already injected
 
-/**
- * Read the persisted progress object for the current learner.
- * Returns an empty object when nothing has been saved yet.
- */
-function readSavedProgress() {
-  try {
-    return JSON.parse(localStorage.getItem(courseProgressKey()) || "{}");
-  } catch {
-    return {};
-  }
-}
+  const script = frameDocument.createElement("script");
+  script.id    = "__portalAPIScript";
+  script.textContent = `
+    (function () {
+      window.__portal = {
+        isReady: function () { return typeof setLang === 'function'; },
 
-/**
- * Restore the completed-modules Set inside the course frame from localStorage.
- * Safe to call even when the frame has not yet initialised its `completed` Set.
- */
-function restoreCompletedModules(frameWindow) {
-  // frameWindow.completed is a Set created by the course JS.
-  // If it doesn't exist yet, do nothing — restoreCourseProgress will call
-  // this again once setLang() has run and the Set is initialised.
-  if (!frameWindow.completed) return;
+        getLang: function () { return lang; },
 
-  const saved = readSavedProgress();
-  frameWindow.completed.clear();
-  (saved.completed || []).forEach((moduleId) => frameWindow.completed.add(moduleId));
-}
+        getCompleted: function () { return Array.from(completed); },
 
-/**
- * Restore full course progress (language, screen, completed modules) after the
- * frame's JS has initialised (i.e. window.T is defined).
- *
- * FIX: Guard portalProgressRestored so this runs exactly once per frame load,
- * preventing a re-render loop.
- */
-function restoreCourseProgress(frameDocument) {
-  const frameWindow = frameDocument.defaultView;
-  const learner     = getLearner();
-
-  // Wait until the course JS has fully initialised.
-  // FIX: The original guard checked `!frameWindow.T`, but T is declared with
-  // `const` in the course HTML — const/let variables at top-level script scope
-  // are NOT added to window, so frameWindow.T is always undefined and the
-  // function always returned early without restoring anything.
-  // We now check for `setLang` instead, which is a `function` declaration and
-  // IS accessible as a property on window.
-  if (!frameWindow || typeof frameWindow.setLang !== "function" || frameWindow.portalProgressRestored) return;
-
-  frameWindow.portalProgressRestored = true;
-
-  const saved      = readSavedProgress();
-  const targetLang = saved.lang || langForLearner(learner);
-
-  // Set language — this initialises frameWindow.completed among other state.
-  if (typeof frameWindow.setLang === "function") {
-    frameWindow.setLang(targetLang);
-  } else {
-    frameWindow.lang = targetLang;
-  }
-
-  // Re-apply completed modules AFTER setLang() so the Set exists.
-  restoreCompletedModules(frameWindow);
-
-  // Refresh progress bar / module grid.
-  if (typeof frameWindow.updateProgress    === "function") frameWindow.updateProgress();
-  if (typeof frameWindow.renderModuleGrid  === "function") frameWindow.renderModuleGrid();
-
-  // Navigate to the last known screen.
-  if (saved.screen === "s-lesson" && saved.moduleId && typeof frameWindow.openModule === "function") {
-    frameWindow.openModule(saved.moduleId);
-  } else if (saved.screen === "s-test" && typeof frameWindow.openFinalTest === "function") {
-    frameWindow.openFinalTest();
-  } else if (typeof frameWindow.showScreen === "function") {
-    frameWindow.showScreen("s-home");
-  }
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// COURSE DESIGN UPGRADE
-// ─────────────────────────────────────────────────────────────────────────────
-function upgradeCourseDesign(frameDocument) {
-  if (frameDocument.querySelector("#portalCourseStyles")) return;
-
-  const style = frameDocument.createElement("style");
-  style.id = "portalCourseStyles";
-  style.textContent = `
-    body { background: #f6f8fb !important; color: #172033; }
-    #app { max-width: 980px; margin: 0 auto; padding: 24px 20px 40px; }
-    .screen { padding: 22px 0; }
-    h1 { letter-spacing: 0 !important; }
-    .lang-btn, .mod-card, .info-card, .quiz-q, .imaging-card, .gloss-entry {
-      border: 1px solid #dce5f2 !important;
-      border-radius: 8px !important;
-      background: rgba(255,255,255,0.98) !important;
-      box-shadow: 0 10px 28px rgba(16,24,40,0.07);
-    }
-    .mod-card.completed { border-color: #1D9E75 !important; background: #eef8f5 !important; }
-    .btn-primary { border-color: #1D9E75 !important; background: #1D9E75 !important; color: #fff !important; }
-    .quiz-q { padding: 18px !important; }
-    .quiz-q.ft-unanswered, .quiz-q.portal-missing {
-      border-color: #f79009 !important;
-      background: #fff8eb !important;
-      box-shadow: 0 0 0 4px rgba(247,144,9,0.14), 0 10px 28px rgba(16,24,40,0.07);
-    }
-    .quiz-q.ft-unanswered::before, .quiz-q.portal-missing::before {
-      content: "Answer required";
-      display: inline-flex;
-      margin-bottom: 10px;
-      border-radius: 999px;
-      background: #f79009;
-      color: #fff;
-      padding: 4px 10px;
-      font-size: 0.76rem;
-      font-weight: 850;
-    }
-    .quiz-opt { min-height: 42px; line-height: 1.45; white-space: normal; overflow-wrap: anywhere; }
-    .quiz-opt.ft-selected, .quiz-opt.portal-selected {
-      border-color: #2563eb !important;
-      background: #eff6ff !important;
-      color: #12366f !important;
-      font-weight: 800 !important;
-    }
+        /* Replace the completed Set, then refresh the UI grid. */
+        setCompleted: function (moduleIds) {
+          completed = new Set(moduleIds);
+          if (typeof renderModuleGrid === 'function') renderModuleGrid();
+          if (typeof updateProgress   === 'function') updateProgress();
+        }
+      };
+    })();
   `;
-  frameDocument.head.appendChild(style);
+  // appendChild causes the script to execute synchronously inside the frame.
+  frameDocument.body.appendChild(script);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// INSTALL COURSE PERSISTENCE  (patches frame functions to auto-save on nav)
+// STEP 2 — PATCH FRAME NAVIGATION FUNCTIONS
+//
+// Wraps setLang / showScreen / openModule / openFinalTest so that every
+// navigation action automatically saves progress to localStorage.
 // ─────────────────────────────────────────────────────────────────────────────
 function installCoursePersistence(frameDocument) {
-  const frameWindow = frameDocument.defaultView;
-  if (!frameWindow || frameWindow.portalPersistenceInstalled) return;
+  const fw = frameDocument.defaultView;
+  if (!fw || fw.portalPersistenceInstalled) return;
+  fw.portalPersistenceInstalled = true;
 
-  frameWindow.portalPersistenceInstalled = true;
+  const origSetLang       = fw.setLang;
+  const origShowScreen    = fw.showScreen;
+  const origOpenModule    = fw.openModule;
+  const origOpenFinalTest = fw.openFinalTest;
 
-  const originalSetLang      = frameWindow.setLang;
-  const originalShowScreen   = frameWindow.showScreen;
-  const originalOpenModule   = frameWindow.openModule;
-  const originalOpenFinalTest= frameWindow.openFinalTest;
-
-  if (typeof originalSetLang === "function") {
-    frameWindow.setLang = function setLangAndPersist(language) {
-      originalSetLang.call(frameWindow, language);
-      // Restore completed modules immediately after language switch so the
-      // grid renders with the correct completion badges.
-      restoreCompletedModules(frameWindow);
+  if (typeof origSetLang === "function") {
+    fw.setLang = function (language) {
+      origSetLang.call(fw, language);
+      // setLang resets `completed` to a new Set() — restore saved modules now.
+      restoreCompletedModules(frameDocument);
       persistCourseProgress(frameDocument, { lang: language, screen: "s-home" });
     };
   }
 
-  if (typeof originalShowScreen === "function") {
-    frameWindow.showScreen = function showScreenAndPersist(screenId) {
-      originalShowScreen.call(frameWindow, screenId);
+  if (typeof origShowScreen === "function") {
+    fw.showScreen = function (screenId) {
+      origShowScreen.call(fw, screenId);
       persistCourseProgress(frameDocument, { screen: screenId });
     };
   }
 
-  if (typeof originalOpenModule === "function") {
-    frameWindow.openModule = function openModuleAndPersist(moduleId) {
-      originalOpenModule.call(frameWindow, moduleId);
+  if (typeof origOpenModule === "function") {
+    fw.openModule = function (moduleId) {
+      origOpenModule.call(fw, moduleId);
       persistCourseProgress(frameDocument, { screen: "s-lesson", moduleId });
     };
   }
 
-  if (typeof originalOpenFinalTest === "function") {
-    frameWindow.openFinalTest = function openFinalTestAndPersist() {
-      originalOpenFinalTest.call(frameWindow);
+  if (typeof origOpenFinalTest === "function") {
+    fw.openFinalTest = function () {
+      origOpenFinalTest.call(fw);
       persistCourseProgress(frameDocument, { screen: "s-test", moduleId: "final-test" });
-      // FIX (Bug 2): defer restoreFinalAttempt so the test DOM has rendered.
       window.setTimeout(() => restoreFinalAttempt(frameDocument), 80);
     };
   }
-} // ← this closing brace was MISSING in the original, which caused Bug 1
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
-// PERSIST PROGRESS  (write current state to localStorage)
+// STEP 3 — RESTORE SAVED PROGRESS ON LOAD
+// ─────────────────────────────────────────────────────────────────────────────
+function restoreCourseProgress(frameDocument) {
+  const fw = frameDocument.defaultView;
+
+  // Use __portal.isReady() so this works regardless of let/var/const in the frame.
+  if (!fw || !fw.__portal || !fw.__portal.isReady() || fw.portalProgressRestored) return;
+  fw.portalProgressRestored = true;
+
+  const saved      = readSavedProgress();
+  const targetLang = saved.lang || langForLearner(getLearner());
+
+  // setLang is patched above — it will call restoreCompletedModules + persist
+  // after originalSetLang resets the completed Set.
+  if (typeof fw.setLang === "function") {
+    fw.setLang(targetLang);
+  }
+
+  // setLang already restored completed modules, but call again as a safety net
+  // in case setLang wasn't patched yet for some reason.
+  restoreCompletedModules(frameDocument);
+
+  // Refresh the progress bar.
+  if (typeof fw.updateProgress   === "function") fw.updateProgress();
+  if (typeof fw.renderModuleGrid === "function") fw.renderModuleGrid();
+
+  // Navigate back to where the learner left off.
+  if (saved.screen === "s-lesson" && saved.moduleId && typeof fw.openModule === "function") {
+    fw.openModule(saved.moduleId);
+  } else if (saved.screen === "s-test" && typeof fw.openFinalTest === "function") {
+    fw.openFinalTest();
+  } else if (typeof fw.showScreen === "function") {
+    fw.showScreen("s-home");
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// STEP 4 — RESTORE COMPLETED MODULES FROM LOCALSTORAGE INTO THE FRAME
+// ─────────────────────────────────────────────────────────────────────────────
+function restoreCompletedModules(frameDocument) {
+  const fw = frameDocument.defaultView;
+  // Use the injected API — guaranteed to access the real `completed` variable.
+  if (!fw || !fw.__portal) return;
+
+  const saved = readSavedProgress();
+  fw.__portal.setCompleted(saved.completed || []);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PERSIST PROGRESS  (write current frame state to localStorage)
 // ─────────────────────────────────────────────────────────────────────────────
 function getActiveScreen(frameDocument) {
   return frameDocument.querySelector(".screen.active")?.id || "s-home";
 }
 
 function persistCourseProgress(frameDocument, patch = {}) {
-  const frameWindow = frameDocument.defaultView;
-  if (!frameWindow) return;
+  const fw = frameDocument.defaultView;
+  if (!fw || !fw.__portal) return;
 
   const existing = readSavedProgress();
 
-  // FIX (Bug 3): Only overwrite `completed` when the frame's Set actually
-  // contains entries, OR when we have no existing saved data yet.
-  // This prevents an uninitialised empty Set from erasing stored progress.
-  const completedArray = (frameWindow.completed && frameWindow.completed.size > 0)
-    ? [...frameWindow.completed]
+  // Use the injected API to read the current completed state.
+  // Fall back to existing saved array if the frame hasn't loaded its API yet.
+  const liveCompleted = fw.__portal.getCompleted();
+  const completedArray = (liveCompleted.length > 0)
+    ? liveCompleted
     : (existing.completed || []);
 
   const progress = {
     ...existing,
     ...patch,
-    lang:      patch.lang || frameWindow.lang || existing.lang || langForLearner(getLearner()),
+    lang:      patch.lang || fw.__portal.getLang() || existing.lang || langForLearner(getLearner()),
     screen:    patch.screen || getActiveScreen(frameDocument),
     completed: completedArray,
     updatedAt: new Date().toISOString()
   };
 
   localStorage.setItem(courseProgressKey(), JSON.stringify(progress));
-  // Track which progress key is "active" (useful for multi-learner scenarios).
   localStorage.setItem(activeAttemptKey, courseProgressKey());
 }
 
@@ -365,23 +288,22 @@ function scheduleProgressSave(frameDocument) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// QUIZ SELECTION STATE  (highlight selected options and auto-save)
+// QUIZ SELECTION STATE  (portal-selected class + auto-save)
 // ─────────────────────────────────────────────────────────────────────────────
 function wireCourseSelectionState(frameDocument) {
   if (frameDocument.body.dataset.portalSelectionWired === "true") return;
-
   frameDocument.body.dataset.portalSelectionWired = "true";
 
-  frameDocument.addEventListener("click", (event) => {
-    const selectedOption = event.target.closest?.(".quiz-opt");
-    if (!selectedOption || selectedOption.classList.contains("disabled")) return;
+  frameDocument.addEventListener("click", (e) => {
+    const opt = e.target.closest?.(".quiz-opt");
+    if (!opt || opt.classList.contains("disabled")) return;
 
-    const question = selectedOption.closest(".quiz-q");
-    if (!question) return;
+    const q = opt.closest(".quiz-q");
+    if (!q) return;
 
-    question.querySelectorAll(".quiz-opt").forEach((opt) => opt.classList.remove("portal-selected"));
-    question.classList.remove("portal-missing", "ft-unanswered");
-    selectedOption.classList.add("portal-selected");
+    q.querySelectorAll(".quiz-opt").forEach(o => o.classList.remove("portal-selected"));
+    q.classList.remove("portal-missing", "ft-unanswered");
+    opt.classList.add("portal-selected");
 
     window.setTimeout(() => saveFinalAttempt(frameDocument), 0);
     scheduleProgressSave(frameDocument);
@@ -389,128 +311,107 @@ function wireCourseSelectionState(frameDocument) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// MISSING ANSWER HIGHLIGHTER  (intercepts alert() inside the frame)
+// MISSING ANSWER HIGHLIGHTER
 // ─────────────────────────────────────────────────────────────────────────────
 function wireMissingAnswerHighlighter(frameDocument) {
-  const frameWindow = frameDocument.defaultView;
-  if (!frameWindow || frameWindow.portalAlertWired) return;
+  const fw = frameDocument.defaultView;
+  if (!fw || fw.portalAlertWired) return;
+  fw.portalAlertWired = true;
 
-  frameWindow.portalAlertWired = true;
-  const originalAlert = frameWindow.alert.bind(frameWindow);
-
-  frameWindow.alert = (message) => {
-    if (typeof message === "string" && /question|frage|vragen|répondre|rester|remaining/i.test(message)) {
+  const origAlert = fw.alert.bind(fw);
+  fw.alert = (msg) => {
+    if (typeof msg === "string" && /question|frage|vragen|répondre|rester|remaining/i.test(msg)) {
       highlightMissingQuestions(frameDocument);
-      originalAlert(`${message}\n\nMissing question(s) are highlighted in orange.`);
+      origAlert(`${msg}\n\nMissing question(s) are highlighted in orange.`);
       return;
     }
-    originalAlert(message);
+    origAlert(msg);
   };
 }
 
 function highlightMissingQuestions(frameDocument) {
-  const activeTest = frameDocument.querySelector("#s-test.active");
-  const questions  = [...(activeTest || frameDocument).querySelectorAll(".quiz-q")];
-
-  questions.forEach((question) => {
-    const hasAnswer = Boolean(question.querySelector(".ft-selected, .portal-selected, .correct, .wrong"));
-    question.classList.toggle("portal-missing", !hasAnswer);
+  const active    = frameDocument.querySelector("#s-test.active");
+  const questions = [...(active || frameDocument).querySelectorAll(".quiz-q")];
+  questions.forEach(q => {
+    q.classList.toggle("portal-missing", !q.querySelector(".ft-selected,.portal-selected,.correct,.wrong"));
   });
-
-  const firstMissing = frameDocument.querySelector(".quiz-q.portal-missing, .quiz-q.ft-unanswered");
-  if (firstMissing) firstMissing.scrollIntoView({ behavior: "smooth", block: "center" });
+  frameDocument.querySelector(".quiz-q.portal-missing, .quiz-q.ft-unanswered")
+    ?.scrollIntoView({ behavior: "smooth", block: "center" });
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// FINAL ASSESSMENT PERSISTENCE  (save / restore individual answer selections)
+// FINAL ASSESSMENT PERSISTENCE
 // ─────────────────────────────────────────────────────────────────────────────
 function saveFinalAttempt(frameDocument) {
   if (getActiveScreen(frameDocument) !== "s-test") return;
 
-  const selected = [...frameDocument.querySelectorAll("#test-body .quiz-q")].map((question) => {
-    const selectedOption = question.querySelector(".ft-selected, .portal-selected");
-    return selectedOption ? Number(selectedOption.dataset.oi) : null;
+  const selected = [...frameDocument.querySelectorAll("#test-body .quiz-q")].map(q => {
+    const s = q.querySelector(".ft-selected, .portal-selected");
+    return s ? Number(s.dataset.oi) : null;
   });
 
-  localStorage.setItem(courseAttemptKey(), JSON.stringify({
-    selected,
-    savedAt: new Date().toISOString()
-  }));
+  localStorage.setItem(courseAttemptKey(), JSON.stringify({ selected, savedAt: new Date().toISOString() }));
 }
 
 function restoreFinalAttempt(frameDocument) {
   if (getActiveScreen(frameDocument) !== "s-test") return;
 
-  const savedAttempt = JSON.parse(localStorage.getItem(courseAttemptKey()) || "null");
-  if (!savedAttempt?.selected?.length) return;
+  const saved = JSON.parse(localStorage.getItem(courseAttemptKey()) || "null");
+  if (!saved?.selected?.length) return;
 
-  frameDocument.querySelectorAll("#test-body .quiz-q").forEach((question, index) => {
-    const selectedIndex = savedAttempt.selected[index];
-    if (selectedIndex === null || selectedIndex === undefined) return;
-
-    const option = question.querySelector(`.quiz-opt[data-oi="${selectedIndex}"]`);
-    if (option && !option.classList.contains("disabled")) {
-      option.click();
-    }
+  frameDocument.querySelectorAll("#test-body .quiz-q").forEach((q, i) => {
+    const idx = saved.selected[i];
+    if (idx === null || idx === undefined) return;
+    const opt = q.querySelector(`.quiz-opt[data-oi="${idx}"]`);
+    if (opt && !opt.classList.contains("disabled")) opt.click();
   });
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// SCORE CAPTURE  (detect when the score circle appears and submit to Supabase)
+// SCORE CAPTURE
 // ─────────────────────────────────────────────────────────────────────────────
 function captureScoreFromFrame(frameDocument) {
-  const scoreNumber = frameDocument.querySelector(".score-circle .score-num");
-  const scoreLabel  = frameDocument.querySelector(".score-circle .score-label");
-  if (!scoreNumber || !scoreLabel) return;
+  const numEl   = frameDocument.querySelector(".score-circle .score-num");
+  const labelEl = frameDocument.querySelector(".score-circle .score-label");
+  if (!numEl || !labelEl) return;
 
-  const score = Number(scoreNumber.textContent.trim());
-  const total = Number(scoreLabel.textContent.replace("/", "").trim());
+  const score = Number(numEl.textContent.trim());
+  const total = Number(labelEl.textContent.replace("/", "").trim());
   if (!Number.isFinite(score) || !Number.isFinite(total)) return;
 
-  const learner       = getLearner();
-  const percentage    = Math.round((score / total) * 100);
-  const passed        = score >= 23;
-  const submittedAt   = new Date().toISOString();
-  const submissionKey = `${learner?.username}-${langForLearner(learner)}-${score}-${total}-${percentage}-${scoreLabel.textContent}`;
+  const learner = getLearner();
+  const pct     = Math.round((score / total) * 100);
+  const passed  = score >= 23;
+  const key     = `${learner?.username}-${langForLearner(learner)}-${score}-${total}-${pct}`;
 
-  if (submissionKey === lastSubmittedKey) return;
-  lastSubmittedKey = submissionKey;
-
-  // Clear the in-progress attempt once a score is captured.
+  if (key === lastSubmittedKey) return;
+  lastSubmittedKey = key;
   localStorage.removeItem(courseAttemptKey());
 
   submitScore({
-    timestamp:      submittedAt,
+    timestamp:      new Date().toISOString(),
     username:       learner?.username || "Unknown",
     selectedLocale: learner?.locale   || "",
     courseLanguage: langForLearner(learner),
     course:         "Medical Transcription Training",
-    score,
-    total,
-    percentage,
+    score, total, percentage: pct,
     passingScore:   23,
     status:         passed ? "Passed" : "Needs Review"
   });
 }
 
 async function submitScore(result) {
-  // Persist locally first so the score is never lost even if Supabase is down.
   const results   = getResults();
-  const duplicate = results.some(
-    (row) => row.username === result.username &&
-             row.timestamp === result.timestamp &&
-             row.score === result.score &&
-             row.total === result.total
+  const duplicate = results.some(r =>
+    r.username === result.username &&
+    r.timestamp === result.timestamp &&
+    r.score === result.score &&
+    r.total === result.total
   );
-
-  if (!duplicate) {
-    results.unshift(result);
-    saveResults(results);
-    renderStats();
-  }
+  if (!duplicate) { results.unshift(result); saveResults(results); renderStats(); }
 
   try {
-    const response = await fetch(`${SUPABASE_URL}/rest/v1/course_scores`, {
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/course_scores`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -529,72 +430,101 @@ async function submitScore(result) {
         submitted_at:    new Date().toISOString()
       })
     });
-
-    if (!response.ok) throw new Error(`HTTP ${response.status}`);
-
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
     sheetStatus.textContent = "Score saved successfully ✓";
-  } catch (error) {
-    console.error("Supabase submit error:", error);
+  } catch (err) {
+    console.error("Supabase error:", err);
     sheetStatus.textContent = "Database save failed – score stored locally";
   }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// FRAME WATCHER  (entry point – runs once per page load)
+// COURSE DESIGN UPGRADE  (visual polish injected into the frame)
+// ─────────────────────────────────────────────────────────────────────────────
+function upgradeCourseDesign(frameDocument) {
+  if (frameDocument.querySelector("#portalCourseStyles")) return;
+  const style = frameDocument.createElement("style");
+  style.id = "portalCourseStyles";
+  style.textContent = `
+    body { background: #f6f8fb !important; color: #172033; }
+    #app { max-width: 980px; margin: 0 auto; padding: 24px 20px 40px; }
+    .screen { padding: 22px 0; }
+    h1 { letter-spacing: 0 !important; }
+    .lang-btn, .mod-card, .info-card, .quiz-q, .imaging-card, .gloss-entry {
+      border: 1px solid #dce5f2 !important; border-radius: 8px !important;
+      background: rgba(255,255,255,0.98) !important;
+      box-shadow: 0 10px 28px rgba(16,24,40,0.07);
+    }
+    .mod-card.completed { border-color: #1D9E75 !important; background: #eef8f5 !important; }
+    .btn-primary { border-color: #1D9E75 !important; background: #1D9E75 !important; color: #fff !important; }
+    .quiz-q { padding: 18px !important; }
+    .quiz-q.ft-unanswered, .quiz-q.portal-missing {
+      border-color: #f79009 !important; background: #fff8eb !important;
+      box-shadow: 0 0 0 4px rgba(247,144,9,0.14), 0 10px 28px rgba(16,24,40,0.07);
+    }
+    .quiz-q.ft-unanswered::before, .quiz-q.portal-missing::before {
+      content: "Answer required"; display: inline-flex; margin-bottom: 10px;
+      border-radius: 999px; background: #f79009; color: #fff;
+      padding: 4px 10px; font-size: 0.76rem; font-weight: 850;
+    }
+    .quiz-opt { min-height: 42px; line-height: 1.45; white-space: normal; overflow-wrap: anywhere; }
+    .quiz-opt.ft-selected, .quiz-opt.portal-selected {
+      border-color: #2563eb !important; background: #eff6ff !important;
+      color: #12366f !important; font-weight: 800 !important;
+    }
+  `;
+  frameDocument.head.appendChild(style);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// FRAME WATCHER  (entry point)
 // ─────────────────────────────────────────────────────────────────────────────
 function startWatchingCourseFrame() {
   courseFrame.addEventListener("load", () => {
     let frameDocument;
-
     try {
       frameDocument = courseFrame.contentDocument;
     } catch {
-      sheetStatus.textContent =
-        "Course tracking requires the course HTML to be hosted in the same GitHub folder.";
+      sheetStatus.textContent = "Course tracking requires same-origin hosting.";
       return;
     }
-
     if (!frameDocument?.body) return;
 
-    // ── 1. Inject portal styling ──────────────────────────────────────────────
+    // 1. Visual polish
     upgradeCourseDesign(frameDocument);
 
-    // ── 2. Patch frame navigation functions so every nav auto-saves ───────────
+    // 2. Inject the __portal API into the frame (closure-based, 100% reliable)
+    injectFrameAPI(frameDocument);
+
+    // 3. Patch navigation functions to auto-save on every screen change
     installCoursePersistence(frameDocument);
 
-    // ── 3. Wire interactive helpers ───────────────────────────────────────────
+    // 4. Wire quiz helpers
     wireMissingAnswerHighlighter(frameDocument);
     wireCourseSelectionState(frameDocument);
 
-    // ── 4. Restore saved progress  ────────────────────────────────────────────
-    // FIX (Bug 1 + Bug 4): restoreCourseProgress is now module-scope and called
-    // AFTER installCoursePersistence so the patched setLang/showScreen functions
-    // are in place before restoration runs.
+    // 5. Restore saved progress (lang + completed modules + last screen)
     restoreCourseProgress(frameDocument);
 
-    // ── 5. Restore final-test attempt if applicable ───────────────────────────
+    // 6. Restore in-progress final test answers
     restoreFinalAttempt(frameDocument);
 
-    // ── 6. Check for an already-visible score (e.g. after hard refresh) ───────
+    // 7. Detect if a score is already visible (e.g. hard refresh on results screen)
     captureScoreFromFrame(frameDocument);
 
-    // ── 7. Listen for custom moduleCompleted event dispatched by the course ───
+    // 8. Listen for module completion events dispatched by the course
     frameDocument.defaultView.addEventListener("moduleCompleted", () => {
       persistCourseProgress(frameDocument);
     });
 
-    // ── 8. MutationObserver: auto-save on any DOM change (debounced 120 ms) ──
+    // 9. MutationObserver: debounced save on any DOM change
     const observer = new MutationObserver(() => {
       scheduleProgressSave(frameDocument);
       captureScoreFromFrame(frameDocument);
     });
-
     observer.observe(frameDocument.body, {
-      childList:       true,
-      subtree:         true,
-      characterData:   true,
-      attributes:      true,
-      attributeFilter: ["class", "style"]
+      childList: true, subtree: true, characterData: true,
+      attributes: true, attributeFilter: ["class", "style"]
     });
   });
 }
@@ -602,14 +532,9 @@ function startWatchingCourseFrame() {
 // ─────────────────────────────────────────────────────────────────────────────
 // EVENT LISTENERS
 // ─────────────────────────────────────────────────────────────────────────────
-loginForm.addEventListener("submit", (event) => {
-  event.preventDefault();
-
-  const learner = {
-    username: usernameInput.value.trim(),
-    locale:   localeInput.value
-  };
-
+loginForm.addEventListener("submit", e => {
+  e.preventDefault();
+  const learner = { username: usernameInput.value.trim(), locale: localeInput.value };
   localStorage.setItem(learnerKey, JSON.stringify(learner));
   showCourse(learner);
 });
@@ -622,7 +547,6 @@ logoutButton.addEventListener("click", () => {
 resetProgressButton.addEventListener("click", () => {
   localStorage.removeItem(courseProgressKey());
   localStorage.removeItem(courseAttemptKey());
-  // Reload the frame so the course starts fresh.
   courseFrame.src = COURSE_FILE;
 });
 
@@ -634,7 +558,6 @@ renderSheetStatus();
 renderStats();
 
 const savedLearner = getLearner();
-
 if (savedLearner) {
   usernameInput.value = savedLearner.username || "";
   localeInput.value   = savedLearner.locale   || "English / UK";
