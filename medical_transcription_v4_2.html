@@ -2677,7 +2677,12 @@ function renderModuleQuiz(modId,container){
 function checkAllAnswered(modId,container,total){
   const answered=container.querySelectorAll('.quiz-opt.correct,.quiz-opt.wrong').length;
   if(answered>=total&&!completed.has(modId)){
-    completed.add(modId); updateProgress(); renderModuleGrid();
+completed.add(modId);
+
+window.dispatchEvent(new Event('moduleCompleted'));
+
+updateProgress();
+renderModuleGrid();
     const btns=document.getElementById('lesson-btns');
     btns.innerHTML=`<button class="btn btn-primary" onclick="showScreen('s-home')">${T[lang].back} →</button>`;
   }
