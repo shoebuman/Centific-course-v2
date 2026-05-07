@@ -191,87 +191,85 @@ function installCoursePersistence(frameDocument) {
 
   if (typeof originalSetLang === "function") {
     frameWindow.setLang = function setLangAndPersist(language) {
-      originalSetLang.call(frameWindow, language);
-      restoreCompletedModules(frameWindow);
-      persistCourseProgress(frameDocument, { lang: language, screen: "s-home" });
-    };
+        originalSetLang.call(frameWindow, language);
+        restoreCompletedModules(frameWindow);
+        persistCourseProgress(frameDocument, { lang: language, screen: "s-home" });
+      };
+    }
+  
+    if (typeof originalShowScreen === "function") {
+      frameWindow.showScreen = function showScreenAndPersist(screenId) {
+        originalShowScreen.call(frameWindow, screenId);
+        persistCourseProgress(frameDocument, { screen: screenId });
+      };
+    }
+  
+    if (typeof originalOpenModule === "function") {
+      frameWindow.openModule = function openModuleAndPersist(moduleId) {
+        originalOpenModule.call(frameWindow, moduleId);
+        persistCourseProgress(frameDocument, { screen: "s-lesson", moduleId });
+      };
+    }
+  
+    if (typeof originalOpenFinalTest === "function") {
+      frameWindow.openFinalTest = function openFinalTestAndPersist() {
+        originalOpenFinalTest.call(frameWindow);
+        persistCourseProgress(frameDocument, { screen: "s-test", moduleId: "final-test" });
+        restoreFinalAttempt(frameDocument);
+      };
+    }
   }
-
-  if (typeof originalShowScreen === "function") {
-    frameWindow.showScreen = function showScreenAndPersist(screenId) {
-      originalShowScreen.call(frameWindow, screenId);
-      persistCourseProgress(frameDocument, { screen: screenId });
-    };
+  
+  function restoreCourseProgress(frameDocument) {
+    const frameWindow = frameDocument.defaultView;
+    const learner = getLearner();
+  
+    if (!frameWindow || !frameWindow.T || frameWindow.portalProgressRestored) {
+      return;
+    }
+  
+    frameWindow.portalProgressRestored = true;
+    const saved = readSavedProgress();
+    const targetLang = saved.lang || langForLearner(learner);
+  
+    if (typeof frameWindow.setLang === "function") {
+      frameWindow.setLang(targetLang);
+    } else {
+      frameWindow.lang = targetLang;
+    }
+  
+    restoreCompletedModules(frameWindow);
+  
+    if (typeof frameWindow.updateProgress === "function") {
+      frameWindow.updateProgress();
+    }
+  
+    if (typeof frameWindow.renderModuleGrid === "function") {
+      frameWindow.renderModuleGrid();
+    }
+  
+    if (saved.screen === "s-lesson" && saved.moduleId && typeof frameWindow.openModule === "function") {
+      frameWindow.openModule(saved.moduleId);
+    } else if (saved.screen === "s-test" && typeof frameWindow.openFinalTest === "function") {
+      frameWindow.openFinalTest();
+    } else if (typeof frameWindow.showScreen === "function") {
+      frameWindow.showScreen("s-home");
+    }
   }
-
-  if (typeof originalOpenModule === "function") {
-    frameWindow.openModule = function openModuleAndPersist(moduleId) {
-      originalOpenModule.call(frameWindow, moduleId);
-      persistCourseProgress(frameDocument, { screen: "s-lesson", moduleId });
-    };
+  
+  function restoreCompletedModules(frameWindow) {
+    const saved = readSavedProgress();
+  
+    if (!frameWindow.completed) {
+      return;
+    }
+  
+    frameWindow.completed.clear();
+    (saved.completed || []).forEach((moduleId) => frameWindow.completed.add(moduleId));
   }
-
-  if (typeof originalOpenFinalTest === "function") {
-    frameWindow.openFinalTest = function openFinalTestAndPersist() {
-      originalOpenFinalTest.call(frameWindow);
-      persistCourseProgress(frameDocument, { screen: "s-test", moduleId: "final-test" });
-      restoreFinalAttempt(frameDocument);
-    };
-  }
-}
-
-function restoreCourseProgress(frameDocument) {
-  const frameWindow = frameDocument.defaultView;
-  const learner = getLearner();
-
-  if (!frameWindow || !frameWindow.T || frameWindow.portalProgressRestored) {
-    return;
-  }
-
-  frameWindow.portalProgressRestored = true;
-  const saved = readSavedProgress();
-  const targetLang = saved.lang || langForLearner(learner);
-
-  if (typeof frameWindow.setLang === "function") {
-    frameWindow.setLang(targetLang);
-  } else {
-    frameWindow.lang = targetLang;
-  }
-
-  restoreCompletedModules(frameWindow);
-
-  if (typeof frameWindow.updateProgress === "function") {
-    frameWindow.updateProgress();
-  }
-
-  if (typeof frameWindow.renderModuleGrid === "function") {
-    frameWindow.renderModuleGrid();
-  }
-
-  if (saved.screen === "s-lesson" && saved.moduleId && typeof frameWindow.openModule === "function") {
-    frameWindow.openModule(saved.moduleId);
-  } else if (saved.screen === "s-test" && typeof frameWindow.openFinalTest === "function") {
-    frameWindow.openFinalTest();
-  } else if (typeof frameWindow.showScreen === "function") {
-    frameWindow.showScreen("s-home");
-  }
-
-  persistCourseProgress(frameDocument);
-}
-
-function restoreCompletedModules(frameWindow) {
-  const saved = readSavedProgress();
-
-  if (!frameWindow.completed) {
-    return;
-  }
-
-  frameWindow.completed.clear();
-  (saved.completed || []).forEach((moduleId) => frameWindow.completed.add(moduleId));
-}
-
-function readSavedProgress() {
-  return JSON.parse(localStorage.getItem(courseProgressKey()) || "{}");
+  
+  function readSavedProgress() {
+    return JSON.parse(localStorage.getItem(courseProgressKey()) || "{}");
 }
 
 function getActiveScreen(frameDocument) {
