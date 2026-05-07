@@ -461,37 +461,40 @@ async function submitScore(result) {
     renderStats();
   }
 
-  if (!SCORE_ENDPOINT) {
-    sheetStatus.textContent = "Score saved locally. Paste your Apps Script URL into app.js to save to Google Sheets.";
-    return;
-  }
-
-  // Use text/plain to avoid a CORS preflight — Apps Script does not handle
-  // OPTIONS requests, so application/json would silently fail from GitHub Pages.
-  // text/plain is a "simple request" and goes straight through.
-  const MAX_ATTEMPTS = 3;
-
-  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
-    try {
-      await fetch(SCORE_ENDPOINT, {
-        method: "POST",
-        mode: "no-cors",          // Apps Script ignores the OPTIONS preflight; no-cors skips it
-        headers: { "Content-Type": "text/plain" },
-        body: JSON.stringify(result)
-      });
-
-      // no-cors responses are always opaque (status 0) — a thrown error means network failure.
-      // If we reach here the request was dispatched successfully.
-      sheetStatus.textContent = "Score sent to Google Sheets ✓";
-      return;
-    } catch (error) {
-      if (attempt < MAX_ATTEMPTS) {
-        await new Promise((resolve) => window.setTimeout(resolve, attempt * 1500));
-      } else {
-        sheetStatus.textContent = "Could not send score. It is saved locally — reload to retry.";
-      }
+  try {
+  const response = await fetch(
+    `${SUPABASE_URL}/rest/v1/course_scores`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "apikey": SUPABASE_ANON_KEY,
+        "Authorization": `Bearer ${SUPABASE_ANON_KEY}`
+      },
+      body: JSON.stringify({
+        username: result.username,
+        selected_locale: result.selectedLocale,
+        course_language: result.courseLanguage,
+        score: result.score,
+        total: result.total,
+        percentage: result.percentage,
+        passing_score: result.passingScore,
+        status: result.status,
+        submitted_at: new Date().toISOString()
+      })
     }
+  );
+
+  if (!response.ok) {
+    throw new Error("Failed to save score");
   }
+
+  sheetStatus.textContent = "Score saved successfully ✓";
+
+} catch (error) {
+  console.error(error);
+  sheetStatus.textContent = "Database save failed";
+}
 }
 
 loginForm.addEventListener("submit", (event) => {
