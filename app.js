@@ -190,8 +190,14 @@ function restoreCourseProgress(frameDocument) {
   const frameWindow = frameDocument.defaultView;
   const learner     = getLearner();
 
-  // Wait until the course JS has defined its translation table (T).
-  if (!frameWindow || !frameWindow.T || frameWindow.portalProgressRestored) return;
+  // Wait until the course JS has fully initialised.
+  // FIX: The original guard checked `!frameWindow.T`, but T is declared with
+  // `const` in the course HTML — const/let variables at top-level script scope
+  // are NOT added to window, so frameWindow.T is always undefined and the
+  // function always returned early without restoring anything.
+  // We now check for `setLang` instead, which is a `function` declaration and
+  // IS accessible as a property on window.
+  if (!frameWindow || typeof frameWindow.setLang !== "function" || frameWindow.portalProgressRestored) return;
 
   frameWindow.portalProgressRestored = true;
 
