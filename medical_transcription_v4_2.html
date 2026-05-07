@@ -2523,7 +2523,11 @@ fr:[
 };
 
 // ─── STATE & GLOSSARY LOGIC ──────────────────────────────────────────────────
-let lang='en', completed=new Set();
+// FIX: `let` changed to `var` so these are accessible as frameWindow.lang
+// and frameWindow.completed from the parent portal (app.js).
+// `let`/`const` at top-level script scope are NOT added to window —
+// that was silently breaking all progress saves and restores.
+var lang='en'; var completed=new Set();
 
 function setLang(l){
   lang=l; completed=new Set();
